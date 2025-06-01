@@ -1,0 +1,18 @@
+# Path where all container backups will be stored
+backup_destination: /mnt/user/backup/appdata
+
+# Configuration for container groups
+groups:
+  # You can name each group however you like
+  group-1:
+    # Each item in the list represents a container:
+    # Format: [container_name, appdata_path, restart_flag]
+    # - container_name: the name or ID of the Docker container
+    # - appdata_path: the path to the container's configuration/appdata
+    # - restart_flag: set to 1 to stop/restart the container during backup, 0 to leave it running
+    - [container-a, /mnt/user/appdata/container-a, 0]
+    - [container-b, /mnt/user/appdata/container-b, 1]
+
+  group-2:
+    - [container-c, /mnt/user/appdata/container-c, 1]
+    - [container-d, /mnt/user/appdata/container-d, 1]
