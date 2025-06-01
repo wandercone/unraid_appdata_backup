@@ -1,6 +1,6 @@
 # Unraid Docker Appdata Backup Tool
 
-A Python utility for backing up Docker container appdata and configuration on Unraid systems. This tool supports container stop/start sequencing, selective backup groups, JSON config export, `rsync`-based appdata sync, and Unraid system notifications.
+A Python utility for backing up Docker container appdata and configuration on Unraid systems. This tool supports container stop/start sequencing, selective backup groups, JSON export of the running container, `rsync`-based appdata sync, and Unraid system notifications.
 
 ## Features
 - Backup appdata directories using `rsync`
