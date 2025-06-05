@@ -8,6 +8,9 @@ import yaml
 from pathlib import Path
 from colorlog import ColoredFormatter
 
+CONFIG_FILE = 'config.yaml'
+
+# Setting up logging
 handler = logging.StreamHandler()
 handler.setFormatter(ColoredFormatter(
     fmt='%(log_color)s[%(asctime)s] [%(levelname)s] %(message)s',
@@ -26,60 +29,95 @@ logger.setLevel(logging.INFO)
 logger.addHandler(handler)
 logger.propagate = False
 
-CONFIG_FILE = 'config.yaml'
-client = docker.from_env()
+def set_docker_client(host='local'):
+    if host == 'local':
+        return docker.from_env()
+    else:
+        remote_docker_url = f'tcp://{host}:2375'
+        return docker.DockerClient(base_url=remote_docker_url)
 
-def is_container_running(container_id):
+def remote_path_exists(host, ssh_user, ssh_key, ssh_port, remote_path):
+    check_cmd = ["ssh", "-o", "BatchMode=yes", "-p", str(ssh_port)]
+    if ssh_key:
+        check_cmd.extend(["-i", ssh_key])
+    check_cmd.append(f"{ssh_user}@{host}")
+    check_cmd.append(f"test -d '{remote_path}'")
     try:
-        container = client.containers.get(container_id)
+        subprocess.run(check_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+def is_container_running(container_id, host, docker_client):
+    try:
+        container = docker_client.containers.get(container_id)
         return container.status == 'running'
     except docker.errors.NotFound:
         logger.warning(f"Container not found: {container_id}")
         return False
 
-def stop_container(container_id, dry_run=False):
-    logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Stopping container: {container_id}")
+def stop_container(container_id, docker_client, host, dry_run=False):
+    logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Stopping container: {container_id} on {host}")
     if dry_run:
         return
     try:
-        container = client.containers.get(container_id)
+        container = docker_client.containers.get(container_id)
         container.stop()
     except Exception as e:
         sub = f"Error stopping {container_id}"
         msg = f"{e}"
         notify_host(sub, msg, icon="alert")
-        logger.error(msg)   
+        logger.error(msg)
 
-def start_container(container_id, dry_run=False):
-    logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Starting container: {container_id}")
+def start_container(container_id, docker_client, host, dry_run=False):
+    logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Starting container: {container_id} on {host}")
     if dry_run:
         return
     try:
-        container = client.containers.get(container_id)
+        container = docker_client.containers.get(container_id)
         container.start()
     except Exception as e:
         sub = f"Error starting {container_id}"
         msg = f"{e}"
         notify_host(sub, msg, icon="alert")
-        logger.error(msg)         
+        logger.error(msg)
 
-def backup_container_appdata(source_path, dest_root, container_id, dry_run=False, debug=False):
+def backup_container_appdata(source_path, dest_root, container_id, host, ssh_user, ssh_key=None, ssh_port=22, dry_run=False, debug=False):
+    # This function needs some clean up work.
     source = Path(source_path)
     dest_path = Path(dest_root) / container_id
-    logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Backing up data from {source} to {dest_path}")
+    logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Backing up data from {host}:{source} to {dest_path}")
+
     if dry_run:
         return
-    if not source.exists():
-        raise FileNotFoundError(f"Source path does not exist: {source}")
+
+    if host == "local":
+        if not source.exists():
+            raise FileNotFoundError(f"Source path does not exist: {source}")
+    else:
+        if not remote_path_exists(host, ssh_user, ssh_key, ssh_port, source):
+            raise FileNotFoundError(f"Remote source path does not exist: {host}:{source}")
+
     try:
         dest_path.mkdir(parents=True, exist_ok=True)
-        rsync_command = [
-            "rsync", "-a", "--info=progress2", "--delete"
-        ]
+
+        rsync_command = ["rsync", "-a", "--info=progress2", "--delete"]
+
+        if host != "local":
+            ssh_command = f"/usr/bin/ssh -o Compression=no -x -p {ssh_port}"
+            if ssh_key:
+                ssh_command += f" -i {ssh_key}"
+            rsync_command.extend(["-e", ssh_command])
+            rsync_command.append(f"{ssh_user}@{host}:{source}/")
+        else:
+            rsync_command.append(f"{source}/")
+
+        rsync_command.append(str(dest_path))
+
         if debug:
             rsync_command.append("-v")
             logger.debug(f"Running command: {' '.join(rsync_command)}")
-        rsync_command.extend([f"{source}/", str(dest_path)])
+
         result = subprocess.run(
             rsync_command,
             check=True,
@@ -96,19 +134,19 @@ def backup_container_appdata(source_path, dest_root, container_id, dry_run=False
         sub = f"Backup error"
         msg = f"rsync failed for {container_id}: {e}"
         notify_host(sub, msg, icon="alert")
-        logger.error(msg)       
+        logger.error(msg)
         if debug and e.stdout:
             logger.debug(f"rsync stdout:\n{e.stdout}")
         if debug and e.stderr:
             logger.debug(f"rsync stderr:\n{e.stderr}")
 
-def backup_container_json(container_id, backup_root, dry_run=False):
+def backup_container_json(container_id, backup_root, docker_client, host, dry_run=False):
     json_path = Path(backup_root) / f"{container_id}.json"
     logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Saving container config to {json_path}")
     if dry_run:
         return
     try:
-        container = client.containers.get(container_id)
+        container = docker_client.containers.get(container_id)
         config_data = container.attrs
         with json_path.open('w') as f:
             json.dump(config_data, f, indent=2)
@@ -164,7 +202,7 @@ def main():
             return
 
     if args.group and args.group not in config["groups"]:
-        sub = f"Backup error"
+        sub = "Backup error"
         msg = f"Group '{args.group}' not found in config."
         notify_host(sub, msg, icon="alert")
         logger.error(msg)
@@ -173,44 +211,69 @@ def main():
     groups_to_process = (
         {args.group: config["groups"][args.group]} if args.group else config["groups"]
     )
-
-    backup_root = Path(config["backup_destination"])
-    backup_root.mkdir(parents=True, exist_ok=True)
-
+    # Prepare backup destination
+    store_by_group = config.get("store_by_group", False)
     for group_name, containers in groups_to_process.items():
+        if store_by_group:
+            backup_root = Path(config["backup_destination"]) / group_name
+        else:
+            backup_root = Path(config["backup_destination"])
+
+        backup_root.mkdir(parents=True, exist_ok=True)
+
         logger.info(f"{'- DRY RUN -  ' if args.dry_run else ''}Processing group: {group_name}")
         containers_to_restart = []
-
-        # Stop containers (if restart flag is set)
-        for container_id, _, restart_flag in containers:
-            should_restart = bool(restart_flag)
-            if should_restart and is_container_running(container_id):
-                containers_to_restart.append(container_id)
-                stop_container(container_id, dry_run=args.dry_run)
-            elif should_restart:
-                logger.info(f"{'- DRY RUN -  ' if args.dry_run else ''}{container_id} was not running, skipping stop.")
+        # Step 1 of 3 (stop containers i group per config)
+        for container in containers:
+            container_id = container["name"]
+            host = container.get("host", "local")
+            client = set_docker_client(host)
+            restart_value = container["restart"]
+            if isinstance(restart_value, bool):
+                should_restart = restart_value
             else:
-                logger.info(f"{'- DRY RUN -  ' if args.dry_run else ''}Skipping stop for {container_id} (restart=0).")
+                should_restart = str(restart_value).lower() == "yes"
 
-        # Backup container data
-        for container_id, source_path, _ in containers:
-            backup_container_json(container_id, backup_root, dry_run=args.dry_run)
+            if should_restart and is_container_running(container_id, host, client):
+                containers_to_restart.append(container_id)
+                stop_container(container_id, client, host, dry_run=args.dry_run)
+            elif should_restart:
+                logger.info(f"{'- DRY RUN -  ' if args.dry_run else ''}{container_id} was not running on {host}, skipping stop.")
+            else:
+                logger.info(f"{'- DRY RUN -  ' if args.dry_run else ''}Skipping stop for {container_id} on {host} (restart=no).")
+
+        # Step 2 of 3 (perform config & appdata backup)
+        for container in containers:
+            container_id = container["name"]
+            host = container.get("host", "local")
+            ssh_user = container.get("ssh_user")
+            ssh_key = container.get("ssh_key")
+            ssh_port = container.get("ssh_port", 22)
+            client = set_docker_client(host)
+            source_path = container.get("appdata_path")
+
+            backup_container_json(container_id, backup_root, client, host, dry_run=args.dry_run)
 
             if not source_path:
                 logger.info(f"{'- DRY RUN -  ' if args.dry_run else ''}Skipping data backup for {container_id} (no path).")
                 continue
 
             try:
-                backup_container_appdata(source_path, backup_root, container_id, dry_run=args.dry_run, debug=args.debug)
+                backup_container_appdata(
+                    source_path, backup_root, container_id, host,
+                    ssh_user, ssh_key, ssh_port,
+                    dry_run=args.dry_run, debug=args.debug
+                )
             except Exception as e:
                 sub = f"Backup error for {container_id}"
                 msg = f"{e}"
                 notify_host(sub, msg, icon="alert")
                 logger.error(msg)
 
-        # Restart containers in reverse order
+        # Step 3 of 3 (Start containers within group in opposite order as config)
         for container_id in reversed(containers_to_restart):
-            start_container(container_id, dry_run=args.dry_run)
+            start_container(container_id, client, host, dry_run=args.dry_run)
+
 
 if __name__ == '__main__':
     main()
