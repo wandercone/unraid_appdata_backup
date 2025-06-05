@@ -1,18 +1,39 @@
-# Path where all container backups will be stored
+# Path where all backups will be stored.
 backup_destination: /mnt/user/backup/appdata
 
-# Configuration for container groups
+# Whether to organize backups into subfolders based on groups (e.g., group-1, group-2).
+store_by_group: yes
+
+# Definition of backup groups
 groups:
-  # You can name each group however you like
   group-1:
-    # Each item in the list represents a container:
-    # Format: [container_name, appdata_path, restart_flag]
-    # - container_name: the name or ID of the Docker container
-    # - appdata_path: the path to the container's configuration/appdata
-    # - restart_flag: set to 1 to stop/restart the container during backup, 0 to leave it running
-    - [container-a, /mnt/user/appdata/container-a, 0]
-    - [container-b, /mnt/user/appdata/container-b, 1]
+    # First container in group-1
+    - name: container-a  # Name of the container
+      host: local  # Container is running on the local machine
+      appdata_path: /mnt/user/appdata/container-a  # Path to the container's appdata/config directory
+      restart: yes  # Stop/Start the container for the backup operation
+
+    # Second container in group-1
+    - name: container-b
+      host: local
+      appdata_path: /mnt/user/appdata/container-b
+      restart: no
 
   group-2:
-    - [container-c, /mnt/user/appdata/container-c, 1]
-    - [container-d, /mnt/user/appdata/container-d, 1]
+    # First container in group-2, hosted on a remote server
+    - name: container-c
+      host: 10.0.0.2  # IP address of the remote host
+      ssh_user: userName # Username for rsync over SSH
+      ssh_key: /mnt/user/system/keys/ssh_key  # SSH key for accessing the remote host
+      ssh_port: 2222  # Custom SSH port used by the remote host
+      appdata_path: /docker/container-c  # Appdata path on the remote server
+      restart: yes
+
+    # Second container in group-2, also on the same remote host
+    - name: container-d
+      host: 10.0.0.2
+      ssh_user: userName
+      ssh_key: /mnt/user/system/keys/ssh_key
+      ssh_port: 22  # Standard SSH port
+      appdata_path: /docker/container-d
+      restart: yes
