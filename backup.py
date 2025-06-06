@@ -7,6 +7,7 @@ import docker
 import yaml
 from pathlib import Path
 from colorlog import ColoredFormatter
+from schema import Schema, And, Or, Use, Optional, SchemaError
 
 CONFIG_FILE = 'config.yaml'
 
@@ -30,6 +31,22 @@ logger.addHandler(handler)
 logger.propagate = False
 
 _docker_clients = {}
+
+config_schema = Schema({
+    'backup_destination': And(str, len),
+    'groups': {
+        str: [{
+            'name': And(str, len),
+            Optional('host'): And(str, len),
+            Optional('ssh_user'): And(str, len),
+            Optional('ssh_key'): And(str, len),
+            Optional('ssh_port'): And(Use(int), lambda n: 0 < n < 65536),
+            Optional('appdata_path'): And(str, len),
+            Optional('restart'): Or(bool, And(str, lambda s: s.lower() in ['yes', 'no']))
+        }]
+    },
+    Optional('store_by_group'): bool,
+})
 
 def get_docker_client(host='local'):
     if host not in _docker_clients:
