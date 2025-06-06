@@ -274,11 +274,13 @@ def main():
         logger.critical(f"Failed to parse YAML config: {e}")
         return
 
-    required_keys = ['backup_destination', 'groups']
-    for key in required_keys:
-        if key not in config:
-            logger.critical(f"Missing key in config: {key}")
-            return
+    try:
+        config_schema.validate(config)
+        logger.info("Config schema validation successful.")
+    except SchemaError as e:
+        notify_host("Schema Error", f"Config validation error: {e}", icon="alert", dry_run=args.dry_run)
+        logger.critical(f"Config schema validation failed: {e}")
+        return
 
     if args.group and args.group not in config["groups"]:
         notify_host("Backup error", f"Group '{args.group}' not found in config.", icon="alert", dry_run=args.dry_run)
