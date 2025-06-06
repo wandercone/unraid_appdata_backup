@@ -1,7 +1,3 @@
-# Unraid Docker Appdata Backup Tool
-
-This script provides comprehensive backup and restore management for Docker container appdata on Unraid systems. It performs these functions either locally or remotely via SSH, and supports group-based operations defined in a YAML configuration file.
-
 ## Features
 
 - Backup and restore Docker container appdata (files and configuration) on Unraid
