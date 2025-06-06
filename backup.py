@@ -34,18 +34,21 @@ _docker_clients = {}
 
 config_schema = Schema({
     'backup_destination': And(str, len),
-    Optional('store_by_group'): bool,
+    Optional('store_by_group'): Or(bool,And(str, lambda s: s.lower() in ['yes', 'no'])),
     'groups': {
-        str: [{
-            'name': And(str, len),
-            Optional('host'): And(str, len),
-            Optional('ssh_user'): And(str, len),
-            Optional('ssh_key'): And(str, len),
-            Optional('ssh_port'): And(Use(int), lambda n: 0 < n < 65536),
-            Optional('appdata_path'): And(str, len),
-            Optional('restart'): Or(bool, And(str, lambda s: s.lower() in ['yes', 'no']))
-        }]
-    },
+        str: [
+            {
+                'name': And(str, len),
+                Optional('host'): And(str, len),
+                Optional('ssh_user'): And(str, len),
+                Optional('ssh_key'): And(str, len),
+                Optional('ssh_port'): And(Use(int), lambda n: 0 < n < 65536),
+                Optional('appdata_path'): And(str, len),
+                Optional('restart'): Or(bool,And(str, lambda s: s.lower() in ['yes', 'no'])
+                )
+            }
+        ]
+    }
 })
 
 def get_docker_client(host='local'):
