@@ -34,6 +34,7 @@ _docker_clients = {}
 
 config_schema = Schema({
     'backup_destination': And(str, len),
+    Optional('store_by_group'): bool,
     'groups': {
         str: [{
             'name': And(str, len),
@@ -45,7 +46,6 @@ config_schema = Schema({
             Optional('restart'): Or(bool, And(str, lambda s: s.lower() in ['yes', 'no']))
         }]
     },
-    Optional('store_by_group'): bool,
 })
 
 def get_docker_client(host='local'):
