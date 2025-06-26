@@ -34,7 +34,7 @@ _docker_clients = {}
 
 config_schema = Schema({
     'backup_destination': And(str, len),
-    Optional('store_by_group'): Or(bool,And(str, lambda s: s.lower() in ['yes', 'no'])),
+    Optional('store_by_group'): Or(bool, And(str, lambda s: s.lower() in ['yes', 'no'])),
     'groups': {
         str: [
             {
@@ -44,8 +44,8 @@ config_schema = Schema({
                 Optional('ssh_key'): And(str, len),
                 Optional('ssh_port'): And(Use(int), lambda n: 0 < n < 65536),
                 Optional('appdata_path'): And(str, len),
-                Optional('restart'): Or(bool,And(str, lambda s: s.lower() in ['yes', 'no'])
-                )
+                Optional('restart'): Or(bool, And(str, lambda s: s.lower() in ['yes', 'no'])),
+                Optional('start_delay'): And(Use(int), lambda n: n >= 0)
             }
         ]
     }
@@ -403,6 +403,14 @@ def main():
 
         # Step 3: Start previously stopped containers
         for container_id in reversed(containers_to_restart):
+            container_cfg = next((c for c in containers if c["name"] == container_id), {})
+            host = container_cfg.get("host", "local")
+            delay = container_cfg.get("start_delay", 0)
+            if delay > 0:
+                logger.info(f"Waiting {delay} seconds before starting {container_id} on {host}")
+                if not args.dry_run:
+                    import time
+                    time.sleep(delay)
             start_container(container_id, client, host, dry_run=args.dry_run)
 
 if __name__ == '__main__':
