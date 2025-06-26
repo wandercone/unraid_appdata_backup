@@ -12,6 +12,7 @@ groups:
       host: local  # Container is running on the local machine
       appdata_path: /mnt/user/appdata/container-a  # Path to the container's appdata/config directory
       restart: yes  # Stop/Start the container for the backup operation
+      start_delay: 10 # Wait (in seconds) before starting this container. Helpful if a dependent container needs time to init
 
     # Second container in group-1
     - name: container-b
