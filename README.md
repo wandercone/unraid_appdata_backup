@@ -88,6 +88,7 @@ groups:
       host: local
       appdata_path: /mnt/user/appdata/container-a
       restart: yes
+      start_delay: 10 # Wait (in seconds) before starting this container. Helpful if a dependent container needs time to init
 
     - name: container-b
       host: local
