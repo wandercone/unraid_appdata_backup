@@ -73,7 +73,7 @@ def set_docker_client(host='local', timeout=5):
     except DockerException as e:
         logger.error(f"Failed to connect to Docker on host '{host}': {e}")
         return None
-        
+
 def remote_path_exists(host, ssh_user, ssh_key, ssh_port, remote_path):
     check_cmd = ["ssh", "-o", "BatchMode=yes", "-p", str(ssh_port)]
     if ssh_key:
@@ -182,7 +182,7 @@ def backup_container_appdata(source_path, dest_root, container_id, host, ssh_use
 def restore_container_appdata(backup_root, container_id, dest_path, host, ssh_user, ssh_key=None, ssh_port=22, dry_run=False, debug=False):
     src_path = Path(backup_root) / container_id
     logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Restoring data to {host}:{dest_path} from {src_path}")
-    
+
     if dry_run:
         logger.info(f"- DRY RUN - Would rsync from {src_path} to {host}:{dest_path}")
         return
@@ -401,7 +401,7 @@ def main():
             client = get_docker_client(host)
             if client is None:
                 logger.error(f"Skipping container {container_id} due to Docker connection issue on {host}")
-                continue            
+                continue
             source_path = container.get("appdata_path")
 
             backup_container_json(container_id, backup_root, client, host, dry_run=args.dry_run)
