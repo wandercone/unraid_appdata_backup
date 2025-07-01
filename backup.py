@@ -5,6 +5,7 @@ import argparse
 import logging
 import docker
 import yaml
+from docker.errors import DockerException
 from pathlib import Path
 from colorlog import ColoredFormatter
 from schema import Schema, And, Or, Use, Optional, SchemaError
@@ -53,16 +54,26 @@ config_schema = Schema({
 
 def get_docker_client(host='local'):
     if host not in _docker_clients:
-        _docker_clients[host] = set_docker_client(host)
+        client = set_docker_client(host)
+        if client is None:
+            logger.critical(f"Could not create Docker client for host: {host}")
+            return None
+        _docker_clients[host] = client
     return _docker_clients[host]
 
-def set_docker_client(host='local'):
-    if host == 'local':
-        return docker.from_env()
-    else:
-        remote_docker_url = f'tcp://{host}:2375'
-        return docker.DockerClient(base_url=remote_docker_url)
-
+def set_docker_client(host='local', timeout=5):
+    try:
+        if host == 'local':
+            logger.debug("Connecting to local Docker engine...")
+            return docker.from_env(timeout=timeout)
+        else:
+            remote_docker_url = f'tcp://{host}:2375'
+            logger.debug(f"Connecting to remote Docker at {remote_docker_url} with timeout={timeout}s...")
+            return docker.DockerClient(base_url=remote_docker_url, timeout=timeout)
+    except DockerException as e:
+        logger.error(f"Failed to connect to Docker on host '{host}': {e}")
+        return None
+        
 def remote_path_exists(host, ssh_user, ssh_key, ssh_port, remote_path):
     check_cmd = ["ssh", "-o", "BatchMode=yes", "-p", str(ssh_port)]
     if ssh_key:
@@ -322,7 +333,9 @@ def main():
                 ssh_port = container.get("ssh_port", 22)
                 appdata_path = container.get("appdata_path")
                 client = get_docker_client(host)
-
+                if client is None:
+                    logger.error(f"Skipping container {container_id} due to Docker connection issue on {host}")
+                    continue
                 if args.restore_container and container_id != args.restore_container:
                     continue
 
@@ -364,6 +377,9 @@ def main():
             container_id = container["name"]
             host = container.get("host", "local")
             client = get_docker_client(host)
+            if client is None:
+                logger.error(f"Skipping container {container_id} due to Docker connection issue on {host}")
+                continue
             restart_value = container.get("restart", False)
             should_restart = str(restart_value).lower() == "yes" if isinstance(restart_value, str) else bool(restart_value)
 
@@ -383,6 +399,9 @@ def main():
             ssh_key = container.get("ssh_key")
             ssh_port = container.get("ssh_port", 22)
             client = get_docker_client(host)
+            if client is None:
+                logger.error(f"Skipping container {container_id} due to Docker connection issue on {host}")
+                continue            
             source_path = container.get("appdata_path")
 
             backup_container_json(container_id, backup_root, client, host, dry_run=args.dry_run)
@@ -405,13 +424,17 @@ def main():
         for container_id in reversed(containers_to_restart):
             container_cfg = next((c for c in containers if c["name"] == container_id), {})
             host = container_cfg.get("host", "local")
+            restart_client = get_docker_client(host)
+            if restart_client is None:
+                logger.error(f"Skipping restart of container {container_id} due to Docker connection issue on {host}")
+                continue
             delay = container_cfg.get("start_delay", 0)
             if delay > 0:
                 logger.info(f"Waiting {delay} seconds before starting {container_id} on {host}")
                 if not args.dry_run:
                     import time
                     time.sleep(delay)
-            start_container(container_id, client, host, dry_run=args.dry_run)
+            start_container(container_id, restart_client, host, dry_run=args.dry_run)
 
 if __name__ == '__main__':
     main()
