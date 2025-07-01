@@ -5,6 +5,7 @@ import argparse
 import logging
 import docker
 import yaml
+from docker.errors import DockerException
 from pathlib import Path
 from colorlog import ColoredFormatter
 from schema import Schema, And, Or, Use, Optional, SchemaError
@@ -60,16 +61,16 @@ def get_docker_client(host='local'):
         _docker_clients[host] = client
     return _docker_clients[host]
 
-def set_docker_client(host='local'):
+def set_docker_client(host='local', timeout=5):
     try:
         if host == 'local':
             logger.debug("Connecting to local Docker engine...")
-            return docker.from_env()
+            return docker.from_env(timeout=timeout)
         else:
             remote_docker_url = f'tcp://{host}:2375'
-            logger.debug(f"Connecting to remote Docker at {remote_docker_url}...")
-            return docker.DockerClient(base_url=remote_docker_url)
-    except docker.errors.DockerException as e:
+            logger.debug(f"Connecting to remote Docker at {remote_docker_url} with timeout={timeout}s...")
+            return docker.DockerClient(base_url=remote_docker_url, timeout=timeout)
+    except DockerException as e:
         logger.error(f"Failed to connect to Docker on host '{host}': {e}")
         return None
         
