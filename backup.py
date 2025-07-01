@@ -424,13 +424,17 @@ def main():
         for container_id in reversed(containers_to_restart):
             container_cfg = next((c for c in containers if c["name"] == container_id), {})
             host = container_cfg.get("host", "local")
+            restart_client = get_docker_client(host)
+            if restart_client is None:
+                logger.error(f"Skipping restart of container {container_id} due to Docker connection issue on {host}")
+                continue
             delay = container_cfg.get("start_delay", 0)
             if delay > 0:
                 logger.info(f"Waiting {delay} seconds before starting {container_id} on {host}")
                 if not args.dry_run:
                     import time
                     time.sleep(delay)
-            start_container(container_id, client, host, dry_run=args.dry_run)
+            start_container(container_id, restart_client, host, dry_run=args.dry_run)
 
 if __name__ == '__main__':
     main()
