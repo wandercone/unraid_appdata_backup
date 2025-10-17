@@ -61,7 +61,7 @@ def get_docker_client(host='local'):
         _docker_clients[host] = client
     return _docker_clients[host]
 
-def set_docker_client(host='local', timeout=5):
+def set_docker_client(host='local', timeout=30):
     try:
         if host == 'local':
             logger.debug("Connecting to local Docker engine...")
