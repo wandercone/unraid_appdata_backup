@@ -25,7 +25,7 @@ A Python utility to back up and restore Docker container appdata (files and conf
 - Supports grouping containers for batch operations
 - Works with local and remote Docker hosts via SSH
 - Flexible storage: grouped or flat backup directory structure
-- Optionally stops/restarts containers before/after backup or restore for consistency
+- Optionally stops/restarts containers before/after backup or restore for data integrity
 - Dry-run and debug logging modes for safe testing
 - Colorized, structured logging output
 
@@ -33,6 +33,7 @@ A Python utility to back up and restore Docker container appdata (files and conf
 
 - Python 3.7 or later
 - Docker Engine on target hosts
+  - `lscr.io/linuxserver/socket-proxy:latest` or similar
 - `rsync` installed on both source and destination systems
 - SSH access for remote operations
 - Python packages:
@@ -114,7 +115,7 @@ groups:
 ## How it Works
 
 - For each container, the script may:
-  - Optionally stop the container for backup consistency
+  - Optionally stop the container for backup integrity
   - Export the container's configuration to JSON
   - Use `rsync` to copy the appdata directory to the backup destination
   - Optionally restart the container
