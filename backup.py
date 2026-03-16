@@ -86,7 +86,7 @@ def _log_summary(summary, operation='Backup', dry_run=False):
 
     if not dry_run:
         if failed:
-            failed_names = ', '.join(c for c, _, s, _ in summary if s == 'failed')
+            failed_names = ', '.join(f"{c} ({h})" for c, h, s, _ in summary if s == 'failed')
             msg = f"{ok} ok, {failed} failed, {skipped} skipped. Failed: {failed_names}"
             notify_host(f"{operation} complete", msg, icon="warning")
         else:
