@@ -256,7 +256,7 @@ def restore_container_appdata(backup_root, container_id, dest_path, host, ssh_us
             if ssh_key:
                 mkdir_cmd.extend(["-i", ssh_key])
             mkdir_cmd.append(f"{ssh_user}@{host}")
-            mkdir_cmd.append(f"mkdir -p '{dest_path}'")
+            mkdir_cmd.append(f"mkdir -p {shlex.quote(str(dest_path))}")
             subprocess.run(mkdir_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         rsync_command = ["rsync", "-a", "--info=progress2", "--delete"]
