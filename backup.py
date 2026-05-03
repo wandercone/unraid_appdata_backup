@@ -5,6 +5,7 @@ import argparse
 import logging
 import sys
 import time
+import shlex
 import docker
 import yaml
 from docker.errors import DockerException
@@ -56,23 +57,51 @@ config_schema = Schema({
 })
 
 def acquire_lock():
-    if os.path.exists(LOCK_FILE):
+    try:
+        # Atomically create the lock file with O_CREAT|O_EXCL
+        fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
-            with open(LOCK_FILE) as f:
+            os.write(fd, str(os.getpid()).encode())
+        finally:
+            os.close(fd)
+        return True
+    except FileExistsError:
+        # Lock file already exists, check if it's stale
+        try:
+            with open(LOCK_FILE, 'r') as f:
                 pid = int(f.read().strip())
+            # Check if the process is still running
             os.kill(pid, 0)
             return False  # Process is still running
-        except (OSError, ValueError):
-            pass  # Stale lock file
-    with open(LOCK_FILE, 'w') as f:
-        f.write(str(os.getpid()))
-    return True
+        except (OSError, ValueError, FileNotFoundError):
+            # Stale lock file (process dead or invalid PID), try again
+            try:
+                os.remove(LOCK_FILE)
+            except OSError:
+                pass
+            # Retry lock acquisition once
+            try:
+                fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                try:
+                    os.write(fd, str(os.getpid()).encode())
+                finally:
+                    os.close(fd)
+                return True
+            except FileExistsError:
+                return False
+    except Exception as e:
+        logger.error(f"Unexpected error acquiring lock: {e}")
+        return False
 
 def release_lock():
     try:
-        os.remove(LOCK_FILE)
-    except OSError:
-        pass
+        with open(LOCK_FILE, 'r') as f:
+            pid = int(f.read().strip())
+        # Only remove if we own the lock
+        if pid == os.getpid():
+            os.remove(LOCK_FILE)
+    except (OSError, ValueError, FileNotFoundError) as e:
+        logger.debug(f"Could not release lock: {e}")
 
 def _log_summary(summary, operation='Backup', dry_run=False):
     ok      = sum(1 for _, _, s, _ in summary if s == 'ok')
@@ -98,7 +127,10 @@ def _log_summary(summary, operation='Backup', dry_run=False):
 def validate_remote_containers(config):
     for group_name, containers in config["groups"].items():
         for container in containers:
-            if container.get("host", "local") != "local" and not container.get("ssh_user"):
+            # Only require ssh_user for remote containers that need SSH (have appdata_path)
+            if (container.get("host", "local") != "local" and
+                container.get("appdata_path") and
+                not container.get("ssh_user")):
                 raise ValueError(
                     f"Container '{container['name']}' in group '{group_name}' "
                     f"has a remote host but no 'ssh_user' defined."
@@ -155,28 +187,32 @@ def is_container_running(container_id, host, docker_client):
 def stop_container(container_id, docker_client, host, dry_run=False):
     logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Stopping container: {container_id} on {host}")
     if dry_run:
-        return
+        return True
     try:
         container = docker_client.containers.get(container_id)
         container.stop()
+        return True
     except Exception as e:
         sub = f"Error stopping {container_id}"
         msg = f"{e}"
         notify_host(sub, msg, icon="alert", dry_run=dry_run)
         logger.error(msg)
+        return False
 
 def start_container(container_id, docker_client, host, dry_run=False):
     logger.info(f"{'- DRY RUN -  ' if dry_run else ''}Starting container: {container_id} on {host}")
     if dry_run:
-        return
+        return True
     try:
         container = docker_client.containers.get(container_id)
         container.start()
+        return True
     except Exception as e:
         sub = f"Error starting {container_id}"
         msg = f"{e}"
         notify_host(sub, msg, icon="alert", dry_run=dry_run)
         logger.error(msg)
+        return False
 
 def backup_container_appdata(source_path, dest_root, container_id, host, ssh_user, ssh_key=None, ssh_port=22, dry_run=False, debug=False):
     source = Path(source_path)
@@ -387,7 +423,12 @@ def main():
         groups_to_process = (
             {args.group: config["groups"][args.group]} if args.group else config["groups"]
         )
-        store_by_group = config.get("store_by_group", False)
+        # Normalize store_by_group to a real boolean
+        store_by_group_raw = config.get("store_by_group", False)
+        if isinstance(store_by_group_raw, str):
+            store_by_group = store_by_group_raw.lower() in ['yes', 'true', '1']
+        else:
+            store_by_group = bool(store_by_group_raw)
 
         summary = []
 
@@ -409,6 +450,7 @@ def main():
             )
 
             stopped_containers = set()
+            failed_containers = set()
             container_matched = False
 
             for group_name, containers in restore_groups.items():
@@ -438,7 +480,12 @@ def main():
                     detail = ''
 
                     if is_container_running(container_id, host, client):
-                        stop_container(container_id, client, host, dry_run=args.dry_run)
+                        if not stop_container(container_id, client, host, dry_run=args.dry_run):
+                            failed_containers.add((container_id, host))
+                            status = 'failed'
+                            detail = 'failed to stop container'
+                            summary.append((container_id, host, status, detail))
+                            continue
                         stopped_containers.add((container_id, host))
 
                     if appdata_path:
@@ -457,12 +504,17 @@ def main():
                             notify_host("Restore error", str(e), icon="alert", dry_run=args.dry_run)
 
                     if (container_id, host) in stopped_containers:
-                        start_container(container_id, client, host, dry_run=args.dry_run)
+                        if not start_container(container_id, client, host, dry_run=args.dry_run):
+                            if status == 'ok':
+                                status = 'failed'
+                                detail = 'failed to start container'
 
                     summary.append((container_id, host, status, detail))
 
             if args.restore_container and not container_matched:
                 logger.warning(f"No container named '{args.restore_container}' found in the specified group(s).")
+                _log_summary(summary, operation='Restore', dry_run=args.dry_run)
+                return 1
 
             return _log_summary(summary, operation='Restore', dry_run=args.dry_run)
 
@@ -478,6 +530,7 @@ def main():
 
             logger.info(f"{'- DRY RUN -  ' if args.dry_run else ''}Processing group: {group_name}")
             containers_to_restart = []
+            failed_containers = set()
 
             # Step 1: Stop containers marked for restart
             for container in containers:
@@ -491,8 +544,11 @@ def main():
                 should_restart = str(restart_value).lower() == "yes" if isinstance(restart_value, str) else bool(restart_value)
 
                 if should_restart and is_container_running(container_id, host, client):
+                    if not stop_container(container_id, client, host, dry_run=args.dry_run):
+                        failed_containers.add((container_id, host))
+                        summary.append((container_id, host, 'failed', 'failed to stop container'))
+                        continue
                     containers_to_restart.append(container_id)
-                    stop_container(container_id, client, host, dry_run=args.dry_run)
                 elif should_restart:
                     logger.info(f"{'- DRY RUN -  ' if args.dry_run else ''}{container_id} was not running on {host}, skipping stop.")
                 else:
@@ -502,6 +558,11 @@ def main():
             for container in containers:
                 container_id = container["name"]
                 host = container.get("host", "local")
+
+                # Skip containers that failed to stop
+                if (container_id, host) in failed_containers:
+                    continue
+
                 ssh_user = container.get("ssh_user")
                 ssh_key = container.get("ssh_key")
                 ssh_port = container.get("ssh_port", 22)
@@ -548,13 +609,23 @@ def main():
                 restart_client = get_docker_client(host)
                 if restart_client is None:
                     logger.error(f"Skipping restart of container {container_id} due to Docker connection issue on {host}")
+                    # Mark as failed in summary
+                    for i, (cid, h, status, detail) in enumerate(summary):
+                        if cid == container_id and h == host and status == 'ok':
+                            summary[i] = (cid, h, 'failed', 'failed to restart container')
+                            break
                     continue
                 delay = container_cfg.get("start_delay", 0)
                 if delay > 0:
                     logger.info(f"Waiting {delay} seconds before starting {container_id} on {host}")
                     if not args.dry_run:
                         time.sleep(delay)
-                start_container(container_id, restart_client, host, dry_run=args.dry_run)
+                if not start_container(container_id, restart_client, host, dry_run=args.dry_run):
+                    # Mark as failed in summary
+                    for i, (cid, h, status, detail) in enumerate(summary):
+                        if cid == container_id and h == host and status == 'ok':
+                            summary[i] = (cid, h, 'failed', 'failed to start container')
+                            break
 
         return _log_summary(summary, operation='Backup', dry_run=args.dry_run)
 
