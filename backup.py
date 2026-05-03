@@ -70,25 +70,35 @@ def acquire_lock():
         try:
             with open(LOCK_FILE, 'r') as f:
                 pid = int(f.read().strip())
+        except (ValueError, FileNotFoundError):
+            # Corrupt or missing lock file, treat as stale
+            pass
+        else:
             # Check if the process is still running
-            os.kill(pid, 0)
-            return False  # Process is still running
-        except (OSError, ValueError, FileNotFoundError):
-            # Stale lock file (process dead or invalid PID), try again
             try:
-                os.remove(LOCK_FILE)
-            except OSError:
-                pass
-            # Retry lock acquisition once
-            try:
-                fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                try:
-                    os.write(fd, str(os.getpid()).encode())
-                finally:
-                    os.close(fd)
-                return True
-            except FileExistsError:
+                os.kill(pid, 0)
+                return False  # Process is still running
+            except PermissionError:
+                # Process exists but we can't signal it - lock is valid
                 return False
+            except ProcessLookupError:
+                # Process not found, lock is stale
+                pass
+        # Stale lock file (process dead, invalid PID, or corrupt), try again
+        try:
+            os.remove(LOCK_FILE)
+        except OSError:
+            pass
+        # Retry lock acquisition once
+        try:
+            fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            try:
+                os.write(fd, str(os.getpid()).encode())
+            finally:
+                os.close(fd)
+            return True
+        except FileExistsError:
+            return False
     except Exception as e:
         logger.error(f"Unexpected error acquiring lock: {e}")
         return False
